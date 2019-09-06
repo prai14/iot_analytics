@@ -1,0 +1,100 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'fleet-control
+
+  '
+Globals:
+  Function:
+    Timeout: 3
+Resources:
+  TransformFunctionPermissions:
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName:
+        Fn::GetAtt:
+        - TruckSensorTransformFunction
+        - Arn
+      Principal: iotanalytics.amazonaws.com
+    Type: AWS::Lambda::Permission
+  TruckSensorChannel:
+    Properties:
+      ChannelName: TruckSensorChannel
+    Type: AWS::IoTAnalytics::Channel
+  TruckSensorDataset:
+    DependsOn:
+    - TruckSensorDatastore
+    Properties:
+      Actions:
+      - ActionName: SqlAction
+        QueryAction:
+          SqlQuery: SELECT * FROM TruckSensorDatastore
+      DatasetName: TruckSensorDataset
+    Type: AWS::IoTAnalytics::Dataset
+  TruckSensorDatastore:
+    Properties:
+      DatastoreName: TruckSensorDatastore
+    Type: AWS::IoTAnalytics::Datastore
+  TruckSensorPipeline:
+    DependsOn:
+    - TruckSensorChannel
+    - TruckSensorDatastore
+    Properties:
+      PipelineActivities:
+      - Channel:
+          ChannelName: TruckSensorChannel
+          Name: ChannelActivity
+          Next: LambdaActivity
+        Datastore:
+          DatastoreName: TruckSensorDatastore
+          Name: DatastoreActivity
+        Lambda:
+          BatchSize: 10
+          LambdaName:
+            Ref: TruckSensorTransformFunction
+          Name: LambdaActivity
+          Next: DatastoreActivity
+      PipelineName: TruckSensorPipeline
+    Type: AWS::IoTAnalytics::Pipeline
+  TruckSensorRule:
+    Properties:
+      RuleName: TruckSensorDataToAnalytics
+      TopicRulePayload:
+        Actions:
+        - IotAnalytics:
+            ChannelName:
+              Ref: TruckSensorChannel
+            RoleArn:
+              Fn::GetAtt:
+              - TruckSensorRuleRole
+              - Arn
+        RuleDisabled: true
+        Sql: SELECT * FROM 'truck_sensor'
+    Type: AWS::IoT::TopicRule
+  TruckSensorRuleRole:
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action:
+          - sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service:
+            - iot.amazonaws.com
+        Version: 2012-10-17
+      Path: /
+      Policies:
+      - PolicyDocument:
+          Statement:
+          - Action:
+            - iotanalytics:BatchPutMessage
+            Effect: Allow
+            Resource: '*'
+          Version: 2012-10-17
+        PolicyName: root
+    Type: AWS::IAM::Role
+  TruckSensorTransformFunction:
+    Properties:
+      CodeUri: TruckSensorTransformFunction
+      Handler: app.lambdaHandler
+      Runtime: nodejs8.10
+    Type: AWS::Serverless::Function
+Transform: AWS::Serverless-2016-10-31
